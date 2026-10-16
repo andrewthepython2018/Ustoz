@@ -1,0 +1,6 @@
+{
+  "workerName": "ustoz",
+  "databaseName": "ustoz-db",
+  "databaseId": "REPLACE_WITH_D1_DATABASE_ID",
+  "bucketName": "ustoz-files"
+}
