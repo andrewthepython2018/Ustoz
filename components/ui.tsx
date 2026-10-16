@@ -4,7 +4,7 @@ import {useApp} from '@/lib/client';
 import {Listing,money} from '@/lib/catalog';
 export function Brand(){return <span className="brand"><svg width="30" height="34" viewBox="0 0 30 34" fill="none" aria-hidden="true"><path d="M15 0c0 9-4 13-15 17 11 3 15 7 15 17 0-10 4-14 15-17C19 13 15 9 15 0Z" fill="currentColor"/><path d="M15 9v16M7 17h16" stroke="#f8f6ef" strokeWidth="1.2"/></svg>ustoz<span className="brand-dot">.</span></span>}
 export function Empty({icon:Icon=BookOpen,title,text,action,label}:{icon?:any;title:string;text?:string;action?:()=>void;label?:string}){return <div className="empty"><div className="empty-icon"><Icon size={30} strokeWidth={1.5}/></div><h3>{title}</h3>{text&&<p>{text}</p>}{action&&<button className="btn primary" onClick={action}>{label}<ArrowRight size={17}/></button>}</div>}
-export function Avatar({name,size='normal'}:{name:string;size?:string}){return <span className={'avatar '+size}>{name?.split(' ').slice(0,2).map(s=>s[0]).join('')}</span>}
+export function Avatar({name,size='normal',src}:{name:string;size?:string;src?:string}){return <span className={'avatar '+size}>{src?<img src={src} alt={name}/>:name?.split(' ').slice(0,2).map(s=>s[0]).join('')}</span>}
 export function Rating({listing:l}:{listing:Listing}){const {t}=useApp();return <span className="rating">{l.review_count>0?<><Star size={13} fill="currentColor"/>{Number(l.rating).toFixed(1)}<span>({l.review_count})</span></>:<span>{t.noReviews}</span>}</span>}
 export function Card({listing:l}:{listing:Listing}){
  const {t,subject,navigate,ws,favorite}=useApp();const saved=ws.favorites.includes(l.id);
@@ -12,14 +12,14 @@ export function Card({listing:l}:{listing:Listing}){
   <div className={'card-image '+(l.accent||'sage')}>
    <a href={'/listing/'+l.id} onClick={e=>{e.preventDefault();navigate('/listing/'+l.id)}} aria-label={l.name}>{l.image?<img src={l.image} alt={l.kind==='course'?l.title:l.name} loading="lazy"/>:<div className="listing-placeholder">{l.kind==='course'?<BookOpen size={60} strokeWidth={1}/>:<Avatar name={l.name} size="hero"/>}</div>}</a>
    <span className="image-tag">{l.format==='Онлайн'?<Video size={12}/>:<MapPin size={12}/>} {l.format==='Онлайн'?t.online:l.format==='Очно'?t.offline:t.hybrid}</span>
-   <button className={'heart '+(saved?'saved':'')} aria-label={saved?t.unsave:t.save} onClick={()=>favorite(l.id)}><Heart size={18} fill={saved?'currentColor':'none'}/></button>
-   {l.demo&&<span className="demo-tag">{t.demo}</span>}
+   <button className={'heart '+(saved?'saved':'')} aria-label={saved?t.unsave:t.save} onClick={()=>l.active===0?navigate('/listing/'+l.id):favorite(l.id)}><Heart size={18} fill={saved?'currentColor':'none'}/></button>
+   {l.active===0&&<span className="draft-tag">{t.draft}</span>}
   </div>
   <div className="card-content"><div className="card-eyebrow"><span>{subject(l.subject)}</span><Rating listing={l}/></div>
    <a className="card-name" href={'/listing/'+l.id} onClick={e=>{e.preventDefault();navigate('/listing/'+l.id)}}>{l.kind==='course'?l.title:l.name}<ArrowUpRight size={19}/></a>
    <p className="card-caption">{l.kind==='course'?l.name:l.title}</p>
    <div className="card-meta"><span><MapPin size={13}/>{l.city}</span><span>{l.language}</span><span>{l.experience} {t.years}</span></div>
-   <div className="card-bottom"><div><strong>{money(l.price)} <small>{t.sum}</small></strong><span>{l.kind==='course'?t.perMonth:t.perLesson} · {l.duration} {t.min}</span></div><button className="card-arrow" aria-label={t.more+' '+l.name} onClick={()=>navigate('/listing/'+l.id)}><ArrowUpRight size={21}/></button></div>
+   <div className="card-bottom"><div><strong>{l.price?money(l.price):t.priceMissing} {l.price>0&&<small>{t.sum}</small>}</strong><span>{l.kind==='course'?t.perMonth:t.perLesson} · {l.duration} {t.min}</span></div><button className="card-arrow" aria-label={t.more+' '+l.name} onClick={()=>navigate('/listing/'+l.id)}><ArrowUpRight size={21}/></button></div>
   </div>
  </article>
 }

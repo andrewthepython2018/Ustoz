@@ -15,6 +15,13 @@
       "when": 1792139095376,
       "tag": "0001_cloudy_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792141442926,
+      "tag": "0002_huge_blur",
+      "breakpoints": true
     }
   ]
 }

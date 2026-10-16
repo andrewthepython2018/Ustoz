@@ -6,6 +6,7 @@ export const users = sqliteTable('users', {
   name: text('name').notNull(), role: text('role').notNull(),
   passwordHash: text('password_hash'), salt: text('salt'), phone: text('phone').notNull().default(''),
   city: text('city').notNull().default('Ташкент'), bio: text('bio').notNull().default(''),
+  managedBy: text('managed_by'), photoKey: text('photo_key'),
   createdAt: text('created_at').notNull(),
 });
 export const sessions = sqliteTable('sessions', {
@@ -19,6 +20,7 @@ export const listings = sqliteTable('listings', {
   price: integer('price').notNull(), duration: integer('duration').notNull().default(60),
   description: text('description').notNull(), level: text('level').notNull().default('Все уровни'),
   experience: integer('experience').notNull().default(0), active: integer('active').notNull().default(1),
+  photoKey: text('photo_key'),
   createdAt: text('created_at').notNull(),
 }, t => [index('listing_owner').on(t.ownerId)]);
 export const slots = sqliteTable('slots', {
@@ -57,4 +59,11 @@ export const reviews = sqliteTable('reviews', {
 }, t => [uniqueIndex('review_once').on(t.listingId, t.studentId)]);
 export const rateLimits = sqliteTable('rate_limits', {
   key: text('key').primaryKey(), count: integer('count').notNull(), resetAt: integer('reset_at').notNull(),
+});
+export const media = sqliteTable('media', {
+  key:text('key').primaryKey(), ownerId:text('owner_id').notNull().references(()=>users.id),
+  contentType:text('content_type').notNull(), createdAt:text('created_at').notNull(),
+});
+export const workspaceTemplates = sqliteTable('workspace_templates', {
+  key:text('key').primaryKey(), ownerId:text('owner_id').notNull().references(()=>users.id), createdAt:text('created_at').notNull(),
 });

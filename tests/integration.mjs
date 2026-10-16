@@ -10,7 +10,9 @@ class Client{
  async request(path,method='GET',body,expected=200,headers={}){
   const form=body instanceof FormData;
   const res=await fetch(origin+'/api/'+path,{method,headers:{...(body&&!form?{'Content-Type':'application/json'}:{}),...(this.cookie?{Cookie:this.cookie}:{}),...headers},body:body?(form?body:JSON.stringify(body)):undefined});
-  const cookie=res.headers.get('set-cookie');if(cookie)this.cookie=cookie.split(';')[0];
+  const jar=new Map(this.cookie.split(';').filter(Boolean).map(c=>{const i=c.indexOf('=');return [c.slice(0,i).trim(),c.slice(i+1)]}));
+  for(const value of res.headers.getSetCookie()){const first=value.split(';')[0],i=first.indexOf('=');if(first.slice(i+1))jar.set(first.slice(0,i),first.slice(i+1));else jar.delete(first.slice(0,i));}
+  this.cookie=[...jar].map(([k,v])=>k+'='+v).join('; ');
   const data=res.headers.get('content-type')?.includes('json')?await res.json():{error:await res.text()};assert.equal(res.status,expected,`${method} ${path}: ${JSON.stringify(data)}`);return data;
  }
  async register(role,name){return this.request('auth/register','POST',{name,email:`${role}-${suffix}-${randomUUID().slice(0,4)}@ustoz.test`,password,role},201)}
@@ -66,4 +68,40 @@ const cl=await center.request('listings','POST',{...listing,title:'Группо�
 const groupBookings=await Promise.all([student.request('bookings','POST',{slotId:cs.id},201),other.request('bookings','POST',{slotId:cs.id},201)]);check(groupBookings.length===2,'A course supports multiple simultaneous enrollments');
 const third=new Client();await third.register('student','Третий ученик');await third.request('bookings','POST',{slotId:cs.id},409);check(true,'Group seats are enforced atomically');
 await student.request('auth/logout','POST');await student.request('workspace','GET',null,401);check(true,'Logout revokes the server session');
+// Managed workspaces use actual server records and require ownership on every switch.
+const initialized=await center.request('accounts/initialize','POST',{},201);
+const owned=await center.request('accounts');check(owned.accounts.length===5,'AF MISIS creates a center and three managed tutor workspaces');
+const repeated=await center.request('accounts/initialize','POST',{});check(repeated.alreadyExists&&(await center.request('accounts')).accounts.length===5,'Workspace initialization is idempotent');
+const ownerCatalog=(await center.request('catalog')).listings,drafts=ownerCatalog.filter(l=>l.active===0);
+check(drafts.length===7&&drafts.filter(l=>l.kind==='course').length===4,'Four courses and three tutor drafts are stored in D1');
+check(!(await anon.request('catalog')).listings.some(l=>l.active===0||l.id.startsWith('demo-')),'Public catalog has no demo profiles or private drafts');
+await other.request('listing/'+drafts[0].id,'GET',null,404);check(true,'Other users cannot read a private draft');
+const managed=owned.accounts.find(a=>a.role==='tutor'&&a.managed_by);
+await other.request('accounts/switch','POST',{id:managed.id},404);check(true,'Forged workspace IDs cannot switch another account');
+await other.request('accounts/'+managed.id,'PATCH',{name:'Unauthorised',city:'Ташкент',bio:'',phone:''},404);check(true,'Another account cannot edit a managed profile');
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X7l8AAAAASUVORK5CYII=','base64');
+const imageForm=new FormData();imageForm.append('file',new File([png],'portrait.png',{type:'image/png'}));
+const photo=await center.request('media','POST',imageForm,201);
+await anon.request('media?key='+encodeURIComponent(photo.key),'GET',null,404);check(true,'Unpublished photos remain private');
+const fakePhoto=new FormData();fakePhoto.append('file',new File(['<svg onload="alert(1)"></svg>'],'photo.png',{type:'image/png'}));
+await center.request('media','POST',fakePhoto,400);check(true,'Photo validation checks file signatures instead of trusting the extension');
+await other.request('accounts','POST',{name:'Other profile',role:'tutor',city:'Ташкент',bio:'',phone:'',photoKey:photo.key},400);check(true,'A photo owned by another account cannot be attached');
+await center.request('accounts/'+managed.id,'PATCH',{name:'Преподаватель для проверки фото',city:'Алмалык',bio:'Проверка реального редактирования анкеты.',phone:'+998901234567',photoKey:photo.key});
+await center.request('accounts/switch','POST',{id:managed.id});
+const activeProfile=(await center.request('me')).user;check(activeProfile.id===managed.id&&activeProfile.account_id!==managed.id&&!activeProfile.email.endsWith('.invalid'),'Switching selects the managed actor and keeps the real owner identity');
+const managedWs=await center.request('workspace');check(managedWs.listings.length===1,'Each managed tutor has its own workspace data');
+const managedListing=managedWs.listings[0];
+await center.request('listings/'+managedListing.id,'PATCH',{action:'publish'},400);check(true,'An incomplete draft cannot be published without a price');
+await center.request('listings/'+managedListing.id,'PATCH',{...managedListing,subject:'Подготовка к олимпиадам',price:90000,active:0});
+await center.request('listings/'+managedListing.id,'PATCH',{action:'publish'});
+const published=(await anon.request('listing/'+managedListing.id)).listing;check(published.name==='Преподаватель для проверки фото'&&published.subject==='Подготовка к олимпиадам'&&published.image===photo.url,'Manual names, custom directions and profile photos reach the public catalog');
+const publicPhoto=await fetch(origin+photo.url);check(publicPhoto.status===200&&publicPhoto.headers.get('content-type')==='image/png','A referenced published photo is served with its real image MIME type');
+await other.request('messages','POST',{recipientId:managed.id,body:'Проверка переписки отдельного кабинета'},201);
+await center.request('messages','POST',{recipientId:(await other.request('me')).user.id,body:'Ответ из кабинета преподавателя'},201);
+check((await center.request('messages?peer='+(await other.request('me')).user.id)).messages.length===2,'Managed tutor messages are sent and received under that tutor identity');
+const anotherManaged=owned.accounts.find(a=>a.role==='tutor'&&a.id!==managed.id);
+await center.request('accounts/switch','POST',{id:anotherManaged.id});check((await center.request('workspace')).contacts.length===0,'A second managed tutor does not inherit another tutor conversations');
+await center.request('accounts/switch','POST',{id:initialized.centerId});
+check((await center.request('workspace')).listings.filter(l=>l.kind==='course').length===4,'AF MISIS workspace contains its four editable courses');
+await center.request('auth/logout','POST');await center.request('accounts','GET',null,401);check(true,'Logout clears both the owner session and active workspace');
 console.log(`\n${checks} integration checks passed. Fixtures remain in the local database only.`);

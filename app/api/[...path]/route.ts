@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:workers';
-import { demoListings, subjects, cities, languages } from '@/lib/catalog';
-import { all, one, run, db, now, uid, str, num, iso, choice, currentUser, requireUser, publicUser, passwordHash, session, digest, fail, rateLimit, relation, bookingFor, checkOrigin, response, errorResponse } from '@/lib/server';
+import { subjects, cities, languages } from '@/lib/catalog';
+import { all, one, run, db, now, uid, str, num, iso, choice, currentUser, requireUser, publicUser, passwordHash, session, digest, fail, rateLimit, relation, bookingFor, checkOrigin, response, errorResponse, imageUrl } from '@/lib/server';
+
+import {accountRoute,checkPhoto,readMedia,uploadMedia} from '@/lib/accounts-server';
 
 export const dynamic='force-dynamic';
 async function handler(req:Request){
@@ -8,9 +10,11 @@ async function handler(req:Request){
   const url=new URL(req.url), path=url.pathname.replace(/^\/api\//,'').split('/'), method=req.method;
   if(method!=='GET')checkOrigin(req);
   if(path[0]==='health') return response({ok:true,version:'1.0.0',timezone:'Asia/Tashkent'});
+  if(path[0]==='media'&&method==='GET')return await readMedia(req);
   if(path[0]==='catalog'&&method==='GET'){
-   const rows=await all(`SELECT l.*,u.name,u.role,COALESCE(AVG(r.rating),0) rating,COUNT(r.id) review_count FROM listings l JOIN users u ON u.id=l.owner_id LEFT JOIN reviews r ON r.listing_id=l.id WHERE l.active=1 GROUP BY l.id ORDER BY l.created_at DESC`);
-   return response({listings:[...rows,...demoListings]});
+   const owner=(await currentUser(req))?.account_id||'';
+   const rows=await all(`SELECT l.*,u.name,u.role,COALESCE(l.photo_key,u.photo_key) image_key,(u.id=? OR u.managed_by=?) editable,COALESCE(AVG(r.rating),0) rating,COUNT(r.id) review_count FROM listings l JOIN users u ON u.id=l.owner_id LEFT JOIN reviews r ON r.listing_id=l.id WHERE l.active=1 OR u.id=? OR u.managed_by=? GROUP BY l.id ORDER BY l.created_at DESC`,owner,owner,owner,owner);
+   return response({listings:rows.map(l=>({...l,editable:!!l.editable,image:imageUrl(l.image_key)}))});
   }
   if(path[0]==='me'&&method==='GET'){
    const u=await currentUser(req),sitesAuth=env.TRUST_SITES_IDENTITY==='true';return response({user:publicUser(u),identity:!u&&sitesAuth&&req.headers.get('oai-authenticated-user-id')?{email:req.headers.get('oai-authenticated-user-email'),name:req.headers.get('oai-authenticated-user-full-name')}:null,sitesAuth});
@@ -20,7 +24,7 @@ async function handler(req:Request){
    if(path[1]==='logout'){
     const token=req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('ustoz_session='))?.slice(14);
     if(token)await run('DELETE FROM sessions WHERE token=?',await digest(token));
-    return response({ok:true},200,{'Set-Cookie':'ustoz_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'});
+    const r=response({ok:true},200,{'Set-Cookie':'ustoz_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0'});r.headers.append('Set-Cookie','ustoz_workspace=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');return r;
    }
    await rateLimit(req,'auth',20);const body=await req.json() as any;
    const email=str(body.email,5,254).toLowerCase();if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,'Укажите корректный email');
@@ -42,12 +46,12 @@ async function handler(req:Request){
    fail(404,'Не найдено');
   }
   if(path[0]==='listing'&&method==='GET'){
-   const id=path[1];const d=demoListings.find(x=>x.id===id);if(d)return response({listing:d,slots:[],reviews:[]});
-   const listing=await one('SELECT l.*,u.name,u.role,COALESCE((SELECT AVG(rating) FROM reviews WHERE listing_id=l.id),0) rating,(SELECT COUNT(*) FROM reviews WHERE listing_id=l.id) review_count FROM listings l JOIN users u ON u.id=l.owner_id WHERE l.id=? AND l.active=1',id);
+   const id=path[1],owner=(await currentUser(req))?.account_id||'';
+   const listing=await one('SELECT l.*,u.name,u.role,COALESCE(l.photo_key,u.photo_key) image_key,(u.id=? OR u.managed_by=?) editable,COALESCE((SELECT AVG(rating) FROM reviews WHERE listing_id=l.id),0) rating,(SELECT COUNT(*) FROM reviews WHERE listing_id=l.id) review_count FROM listings l JOIN users u ON u.id=l.owner_id WHERE l.id=? AND (l.active=1 OR u.id=? OR u.managed_by=?)',owner,owner,id,owner,owner);
    if(!listing)fail(404,'Предложение не найдено');
    const slots=await all(`SELECT s.*,s.capacity-(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status<>'cancelled') seats_left FROM slots s WHERE s.listing_id=? AND s.starts_at>? AND (SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status<>'cancelled')<s.capacity ORDER BY s.starts_at LIMIT 100`,id,now());
    const reviews=await all('SELECT r.*,u.name FROM reviews r JOIN users u ON u.id=r.student_id WHERE r.listing_id=? ORDER BY r.created_at DESC',id);
-   return response({listing,slots,reviews});
+   return response({listing:{...listing,editable:!!listing.editable,image:imageUrl(listing.image_key)},slots:listing.active?slots:[],reviews});
   }
   if(path[0]==='profile'&&method==='POST'){
    const body=await req.json() as any,id=req.headers.get('oai-authenticated-user-id'),email=req.headers.get('oai-authenticated-user-email');
@@ -57,9 +61,11 @@ async function handler(req:Request){
    return response({user:publicUser(await one('SELECT * FROM users WHERE id=?','siwc:'+id))},201);
   }
   const u=await requireUser(req);
+  if(path[0]==='accounts')return await accountRoute(req,path,method,u);
+  if(path[0]==='media'&&method==='POST')return await uploadMedia(req,u);
   if(path[0]==='profile'&&method==='PATCH'){
-   const b=await req.json() as any;await run('UPDATE users SET name=?,phone=?,city=?,bio=? WHERE id=?',str(b.name,2,100),str(b.phone,0,30),choice(b.city,cities),str(b.bio,0,2000),u.id);
-   return response({user:publicUser(await one('SELECT * FROM users WHERE id=?',u.id))});
+   const b=await req.json() as any,photo=b.photoKey===undefined?u.photo_key:await checkPhoto(b.photoKey,u.account_id);await run('UPDATE users SET name=?,phone=?,city=?,bio=?,photo_key=? WHERE id=?',str(b.name,2,100),str(b.phone,0,30),choice(b.city,cities),str(b.bio,0,2000),photo,u.id);
+   return response({user:publicUser(await currentUser(req))});
   }
   if(path[0]==='workspace'&&method==='GET'){
    const lessons=await all(`SELECT b.*,s.starts_at,s.ends_at,l.title,l.subject,l.kind,l.price,l.owner_id,l.id listing_id,teacher.name teacher_name,student.name student_name FROM bookings b JOIN slots s ON s.id=b.slot_id JOIN listings l ON l.id=s.listing_id JOIN users teacher ON teacher.id=l.owner_id JOIN users student ON student.id=b.student_id WHERE b.student_id=? OR l.owner_id=? ORDER BY s.starts_at`,u.id,u.id);
@@ -71,7 +77,7 @@ async function handler(req:Request){
   }
   if(path[0]==='favorites'&&method==='POST'){
    const b=await req.json() as any,id=str(b.listingId);
-   if(!demoListings.some(x=>x.id===id)&&!await one('SELECT id FROM listings WHERE id=? AND active=1',id))fail(404,'Предложение не найдено');
+   if(!await one('SELECT id FROM listings WHERE id=? AND active=1',id))fail(404,'Предложение не найдено');
    if(b.saved)await run('INSERT OR IGNORE INTO favorites(user_id,listing_id) VALUES(?,?)',u.id,id);else await run('DELETE FROM favorites WHERE user_id=? AND listing_id=?',u.id,id);
    return response({ok:true});
   }
@@ -80,9 +86,16 @@ async function handler(req:Request){
    if(method==='DELETE') {const r=await run('UPDATE listings SET active=0 WHERE id=? AND owner_id=?',path[1],u.id);if(!r.meta.changes)fail(404,'Не найдено');return response({ok:true});}
    if(method==='POST'||method==='PATCH'){
     const b=await req.json() as any;
-    const vals=[str(b.title,5,140),choice(b.subject,subjects),choice(b.language,languages),choice(b.city,cities),choice(b.format,['Онлайн','Очно','Гибрид']),num(b.price,1000,100000000),num(b.duration,15,240),str(b.description,30,4000),str(b.level,2,100),num(b.experience,0,60)];
-    if(method==='PATCH') {const r=await run('UPDATE listings SET title=?,subject=?,language=?,city=?,format=?,price=?,duration=?,description=?,level=?,experience=? WHERE id=? AND owner_id=?',...vals,path[1],u.id);if(!r.meta.changes)fail(404,'Не найдено');return response({ok:true});}
-    await rateLimit(req,'listing',30);const id=uid();await run('INSERT INTO listings(title,subject,language,city,format,price,duration,description,level,experience,id,owner_id,kind,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',...vals,id,u.id,u.role==='center'?'course':'tutor',now());return response({id},201);
+    const existing=method==='PATCH'?await one('SELECT * FROM listings WHERE id=? AND owner_id=?',path[1],u.id):null;
+    if(method==='PATCH'&&!existing)fail(404,'Предложение не найдено');
+    const ready=(price:number)=>{if(price<1000)fail(400,'Укажите стоимость перед публикацией');if(['Репетитор английского языка','Репетитор программирования','Репетитор математики'].includes(u.name))fail(400,'Сначала укажите имя преподавателя в настройках кабинета');};
+    if(b.action==='publish'&&existing){ready(existing.price);await run('UPDATE listings SET active=1 WHERE id=? AND owner_id=?',existing.id,u.id);return response({ok:true});}
+    const active=b.active===undefined?(existing?.active??1):num(b.active,0,1);
+    const photo=b.photoKey===undefined?(existing?.photo_key??null):await checkPhoto(b.photoKey,u.account_id);
+    const vals=[str(b.title,5,140),str(b.subject,2,100),choice(b.language,languages),choice(b.city,cities),choice(b.format,['Онлайн','Очно','Гибрид']),num(b.price,active?1000:0,100000000),num(b.duration,15,240),str(b.description,30,4000),str(b.level,2,100),num(b.experience,0,60),photo,active];
+    if(active)ready(Number(b.price));
+    if(method==='PATCH'){await run('UPDATE listings SET title=?,subject=?,language=?,city=?,format=?,price=?,duration=?,description=?,level=?,experience=?,photo_key=?,active=? WHERE id=? AND owner_id=?',...vals,existing.id,u.id);return response({ok:true});}
+    await rateLimit(req,'listing',30);const id=uid();await run('INSERT INTO listings(title,subject,language,city,format,price,duration,description,level,experience,photo_key,active,id,owner_id,kind,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',...vals,id,u.id,u.role==='center'?'course':'tutor',now());return response({id},201);
    }
   }
   if(path[0]==='slots'&&method==='POST'){
