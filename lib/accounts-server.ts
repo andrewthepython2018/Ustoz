@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers';
-import {all,one,run,db,uid,now,str,choice,num,fail,response,currentUser,imageUrl,workspaceCookie,rateLimit} from './server';
+import {all,one,run,uid,now,str,choice,fail,response,currentUser,imageUrl,workspaceCookie,rateLimit} from './server';
 import {cities} from './catalog';
 export async function checkPhoto(value:unknown,owner:string){
  if(value===null||value==='')return null;
@@ -32,31 +32,10 @@ export async function uploadMedia(req:Request,u:any){
 async function accounts(owner:string){return (await all(`SELECT u.id,u.name,u.role,u.city,u.bio,u.phone,u.photo_key,u.managed_by,(SELECT COUNT(*) FROM listings WHERE owner_id=u.id) listings_count,(SELECT COUNT(*) FROM listings WHERE owner_id=u.id AND active=1) published_count FROM users u WHERE u.id=? OR u.managed_by=? ORDER BY u.managed_by IS NOT NULL,u.created_at,u.id`,owner,owner)).map(u=>({...u,photo_url:imageUrl(u.photo_key)}))}
 export async function accountRoute(req:Request,path:string[],method:string,u:any){
  const owner=u.account_id;
- if(method==='GET')return response({accounts:await accounts(owner),currentId:u.id,initialized:!!await one('SELECT key FROM workspace_templates WHERE key=?','af-misis-v1:'+owner)});
+ if(method==='GET'&&!path[1])return response({accounts:await accounts(owner),currentId:u.id});
  if(method==='POST'&&path[1]==='switch'){
   const b=await req.json() as any;const next=await one('SELECT id FROM users WHERE id=? AND (id=? OR managed_by=?)',str(b.id),owner,owner);if(!next)fail(404,'Кабинет не найден');
   return response({ok:true},200,{'Set-Cookie':workspaceCookie(next.id,req)});
- }
- if(method==='POST'&&path[1]==='initialize'){
-  const key='af-misis-v1:'+owner;
-  if(await one('SELECT key FROM workspace_templates WHERE key=?',key))return response({ok:true,alreadyExists:true,accounts:await accounts(owner)});
-  const root=await one('SELECT * FROM users WHERE id=?',owner);
-  const reuse=root.role==='center'&&root.name.toUpperCase().includes('МИСИС');const centerId=reuse?root.id:uid();
-  const people=[...(reuse?[]:[{id:centerId,name:'АФ МИСИС',role:'center',bio:'Алмалыкский филиал НИТУ МИСИС. Заполните информацию о курсах и условиях обучения.'}]),
-   {id:uid(),name:'Репетитор английского языка',role:'tutor',bio:'Заполните имя преподавателя, опыт и подход к обучению.'},
-   {id:uid(),name:'Репетитор программирования',role:'tutor',bio:'Заполните имя преподавателя, опыт и подход к обучению.'},
-   {id:uid(),name:'Репетитор математики',role:'tutor',bio:'Заполните имя преподавателя, опыт и подход к обучению.'}];
-  const teacherProfiles=people.filter(p=>p.role==='tutor');
-  const statements=[db().prepare('INSERT INTO workspace_templates(key,owner_id,created_at) VALUES(?,?,?)').bind(key,owner,now())];
-  for(const p of people)statements.push(db().prepare('INSERT INTO users(id,email,name,role,city,bio,managed_by,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(p.id,'managed-'+p.id+'@profiles.ustoz.invalid',p.name,p.role,'Алмалык',p.bio,owner,now()));
-  const courses=[{title:'Программирование: Python с нуля',subject:'Программирование',body:'Основы Python, алгоритмы, работа с данными и практические проекты. Уточните программу, расписание и условия обучения перед публикацией.'},
-   {title:'Английский язык',subject:'Английский язык',body:'Разговорная практика, грамматика, чтение и аудирование. Уточните уровни подготовки, программу курса и условия обучения перед публикацией.'},
-   {title:'Математика',subject:'Математика',body:'Алгебра, геометрия и решение задач. Заполните программу, возрастную группу и формат занятий перед публикацией курса.'},
-   {title:'Физика',subject:'Физика',body:'Механика, электричество и практические задачи. Заполните программу, уровень подготовки и условия обучения перед публикацией курса.'}];
-  const drafts=[...courses.map(c=>({...c,owner:centerId,kind:'course',duration:90})),...teacherProfiles.map((p,i)=>({title:'Индивидуальные занятия: '+['английский язык','программирование','математика'][i],subject:['Английский язык','Программирование','Математика'][i],body:'Опишите опыт, методику и цели занятий. Добавьте имя преподавателя, фотографию и стоимость перед публикацией анкеты.',owner:p.id,kind:'tutor',duration:60}))];
-  for(const d of drafts)statements.push(db().prepare('INSERT INTO listings(id,owner_id,kind,title,subject,language,city,format,price,duration,description,level,experience,active,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)').bind(uid(),d.owner,d.kind,d.title,d.subject,'Русский','Алмалык','Очно',0,d.duration,d.body,'Все уровни',0,now()));
-  try{await db().batch(statements)}catch(e){if(await one('SELECT key FROM workspace_templates WHERE key=?',key))return response({ok:true,alreadyExists:true,accounts:await accounts(owner)});throw e}
-  return response({ok:true,accounts:await accounts(owner),centerId},201);
  }
  if(method==='POST'&&!path[1]){
   await rateLimit(req,'accounts',30);if((await accounts(owner)).length>=30)fail(400,'Достигнут лимит кабинетов');

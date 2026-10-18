@@ -19,6 +19,7 @@ class Client{
 }
 const tutor=new Client(),student=new Client(),other=new Client(),center=new Client(),anon=new Client();
 await anon.request('workspace','GET',null,401);check(true,'Anonymous workspace is protected');
+check((await anon.request('catalog')).listings.length===0,'A fresh database serves a truly empty catalog');
 const t=await tutor.register('tutor','Тестовый преподаватель'),s=await student.register('student','Тестовый ученик');await other.register('student','Другой ученик');await center.register('center','Тестовый учебный центр');
 check(t.user.role==='tutor'&&s.user.role==='student','Registration and session cookies');
 check(!('password_hash' in t.user)&&!('salt' in t.user),'Password hashes are never returned');
@@ -69,14 +70,18 @@ const groupBookings=await Promise.all([student.request('bookings','POST',{slotId
 const third=new Client();await third.register('student','Третий ученик');await third.request('bookings','POST',{slotId:cs.id},409);check(true,'Group seats are enforced atomically');
 await student.request('auth/logout','POST');await student.request('workspace','GET',null,401);check(true,'Logout revokes the server session');
 // Managed workspaces use actual server records and require ownership on every switch.
-const initialized=await center.request('accounts/initialize','POST',{},201);
-const owned=await center.request('accounts');check(owned.accounts.length===5,'AF MISIS creates a center and three managed tutor workspaces');
-const repeated=await center.request('accounts/initialize','POST',{});check(repeated.alreadyExists&&(await center.request('accounts')).accounts.length===5,'Workspace initialization is idempotent');
-const ownerCatalog=(await center.request('catalog')).listings,drafts=ownerCatalog.filter(l=>l.active===0);
-check(drafts.length===7&&drafts.filter(l=>l.kind==='course').length===4,'Four courses and three tutor drafts are stored in D1');
+const owned=await center.request('accounts');check(owned.accounts.length===1,'New accounts have no automatic center or tutor workspaces');
+await center.request('accounts/initialize','POST',{},405);await other.request('accounts/initialize','POST',{},405);
+check((await center.request('accounts')).accounts.length===1&&(await other.request('accounts')).accounts.length===1,'Removed setup endpoint cannot generate offers for any account');
+check(!(await center.request('catalog')).listings.some(l=>l.active===0),'Existing providers receive no automatic course or tutor drafts');
+const created=await center.request('accounts','POST',{name:'Первый преподаватель',role:'tutor',city:'Ташкент',bio:'',phone:''},201);
+const managed=(await center.request('accounts')).accounts.find(a=>a.id===created.id);
+await center.request('accounts/switch','POST',{id:managed.id});
+check((await center.request('workspace')).listings.length===0,'A manually created tutor workspace starts without listings');
+const draft=await center.request('listings','POST',{...listing,price:0,active:0},201);
+const drafts=(await center.request('catalog')).listings.filter(l=>l.id===draft.id);
 check(!(await anon.request('catalog')).listings.some(l=>l.active===0||l.id.startsWith('demo-')),'Public catalog has no demo profiles or private drafts');
 await other.request('listing/'+drafts[0].id,'GET',null,404);check(true,'Other users cannot read a private draft');
-const managed=owned.accounts.find(a=>a.role==='tutor'&&a.managed_by);
 await other.request('accounts/switch','POST',{id:managed.id},404);check(true,'Forged workspace IDs cannot switch another account');
 await other.request('accounts/'+managed.id,'PATCH',{name:'Unauthorised',city:'Ташкент',bio:'',phone:''},404);check(true,'Another account cannot edit a managed profile');
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X7l8AAAAASUVORK5CYII=','base64');
@@ -99,9 +104,9 @@ const publicPhoto=await fetch(origin+photo.url);check(publicPhoto.status===200&&
 await other.request('messages','POST',{recipientId:managed.id,body:'Проверка переписки отдельного кабинета'},201);
 await center.request('messages','POST',{recipientId:(await other.request('me')).user.id,body:'Ответ из кабинета преподавателя'},201);
 check((await center.request('messages?peer='+(await other.request('me')).user.id)).messages.length===2,'Managed tutor messages are sent and received under that tutor identity');
-const anotherManaged=owned.accounts.find(a=>a.role==='tutor'&&a.id!==managed.id);
+const anotherManaged=await center.request('accounts','POST',{name:'Второй преподаватель',role:'tutor',city:'Ташкент',bio:'',phone:''},201);
 await center.request('accounts/switch','POST',{id:anotherManaged.id});check((await center.request('workspace')).contacts.length===0,'A second managed tutor does not inherit another tutor conversations');
-await center.request('accounts/switch','POST',{id:initialized.centerId});
-check((await center.request('workspace')).listings.filter(l=>l.kind==='course').length===4,'AF MISIS workspace contains its four editable courses');
+await center.request('accounts/switch','POST',{id:owned.currentId});
+check((await center.request('workspace')).listings.filter(l=>l.kind==='course').length===1,'The center contains only its manually created course');
 await center.request('auth/logout','POST');await center.request('accounts','GET',null,401);check(true,'Logout clears both the owner session and active workspace');
 console.log(`\n${checks} integration checks passed. Fixtures remain in the local database only.`);

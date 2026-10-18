@@ -15,7 +15,8 @@
     "check": "tsc --noEmit",
     "test:integration": "node tests/integration.mjs",
     "deploy": "node scripts/deploy-cloudflare.mjs",
-    "db:local": "node scripts/migrate-local.mjs"
+    "db:local": "node scripts/migrate-local.mjs",
+    "test:migrations": "node tests/migration-cleanup.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

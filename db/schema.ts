@@ -64,6 +64,3 @@ export const media = sqliteTable('media', {
   key:text('key').primaryKey(), ownerId:text('owner_id').notNull().references(()=>users.id),
   contentType:text('content_type').notNull(), createdAt:text('created_at').notNull(),
 });
-export const workspaceTemplates = sqliteTable('workspace_templates', {
-  key:text('key').primaryKey(), ownerId:text('owner_id').notNull().references(()=>users.id), createdAt:text('created_at').notNull(),
-});

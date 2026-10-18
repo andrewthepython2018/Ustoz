@@ -88,7 +88,7 @@ async function handler(req:Request){
     const b=await req.json() as any;
     const existing=method==='PATCH'?await one('SELECT * FROM listings WHERE id=? AND owner_id=?',path[1],u.id):null;
     if(method==='PATCH'&&!existing)fail(404,'Предложение не найдено');
-    const ready=(price:number)=>{if(price<1000)fail(400,'Укажите стоимость перед публикацией');if(['Репетитор английского языка','Репетитор программирования','Репетитор математики'].includes(u.name))fail(400,'Сначала укажите имя преподавателя в настройках кабинета');};
+    const ready=(price:number)=>{if(price<1000)fail(400,'Укажите стоимость перед публикацией');};
     if(b.action==='publish'&&existing){ready(existing.price);await run('UPDATE listings SET active=1 WHERE id=? AND owner_id=?',existing.id,u.id);return response({ok:true});}
     const active=b.active===undefined?(existing?.active??1):num(b.active,0,1);
     const photo=b.photoKey===undefined?(existing?.photo_key??null):await checkPhoto(b.photoKey,u.account_id);

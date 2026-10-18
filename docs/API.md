@@ -15,11 +15,10 @@
 | POST | `/auth/logout` | Удаление сессии |
 | POST | `/profile` | Создание профиля на основе доверенной Sites identity |
 | PATCH | `/profile` | `name,phone,city,bio,photoKey?` |
-| GET | `/accounts` | Свой основной и управляемые кабинеты, `currentId,initialized` |
+| GET | `/accounts` | Свой основной и управляемые кабинеты, `currentId` |
 | POST | `/accounts` | `name,role` (tutor/center), `city,bio,phone,photoKey?` |
 | PATCH | `/accounts/:id` | `name,city,bio,phone,photoKey?`; только владелец |
 | POST | `/accounts/switch` | `id`; проверяет владельца, выбирает кабинет cookie `ustoz_workspace` |
-| POST | `/accounts/initialize` | Один раз создаёт приватные черновики АФ МИСИС и репетиторов |
 | POST | `/media` | `multipart/form-data`, поле `file`, JPG/PNG/WebP до 5 МБ; `key,url` |
 | GET | `/media?key=…` | Изображение; приватно до привязки к опубликованному предложению |
 | GET | `/workspace` | Свои `lessons,assignments,listings,available,contacts,favorites` |
